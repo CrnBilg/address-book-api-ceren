@@ -7,16 +7,6 @@ namespace AddressBook.Api.Services;
 
 public sealed class ContactService : IContactService
 {
-    private static readonly HashSet<string> AllowedSortFields = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "firstName",
-        "lastName",
-        "email",
-        "company",
-        "createdAt",
-        "updatedAt"
-    };
-
     private readonly IContactRepository _repository;
 
     public ContactService(IContactRepository repository)
@@ -38,6 +28,11 @@ public sealed class ContactService : IContactService
                 Contains(contact.Email, term) ||
                 Contains(contact.PhoneNumber, term) ||
                 Contains(contact.Company, term) ||
+                Contains(contact.AddressLine, term) ||
+                Contains(contact.District, term) ||
+                Contains(contact.City, term) ||
+                Contains(contact.PostalCode, term) ||
+                Contains(contact.Country, term) ||
                 Contains(contact.Notes, term) ||
                 contact.Tags.Any(tag => Contains(tag, term)));
         }
@@ -58,8 +53,9 @@ public sealed class ContactService : IContactService
 
         var totalCount = filtered.Count();
         var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize);
+        var skip = (long)(query.PageNumber - 1) * query.PageSize;
         var items = filtered
-            .Skip((query.PageNumber - 1) * query.PageSize)
+            .Skip(skip > int.MaxValue ? int.MaxValue : (int)skip)
             .Take(query.PageSize)
             .Select(ToDto)
             .ToList();
@@ -86,6 +82,11 @@ public sealed class ContactService : IContactService
             Email = NormalizeOptional(request.Email),
             PhoneNumber = NormalizeOptional(request.PhoneNumber),
             Company = NormalizeOptional(request.Company),
+            AddressLine = NormalizeOptional(request.AddressLine),
+            District = NormalizeOptional(request.District),
+            City = NormalizeOptional(request.City),
+            PostalCode = NormalizeOptional(request.PostalCode),
+            Country = NormalizeOptional(request.Country),
             Notes = NormalizeOptional(request.Notes),
             IsFavorite = request.IsFavorite,
             Tags = NormalizeTags(request.Tags),
@@ -107,6 +108,11 @@ public sealed class ContactService : IContactService
         contact.Email = NormalizeOptional(request.Email);
         contact.PhoneNumber = NormalizeOptional(request.PhoneNumber);
         contact.Company = NormalizeOptional(request.Company);
+        contact.AddressLine = NormalizeOptional(request.AddressLine);
+        contact.District = NormalizeOptional(request.District);
+        contact.City = NormalizeOptional(request.City);
+        contact.PostalCode = NormalizeOptional(request.PostalCode);
+        contact.Country = NormalizeOptional(request.Country);
         contact.Notes = NormalizeOptional(request.Notes);
         contact.IsFavorite = request.IsFavorite;
         contact.Tags = NormalizeTags(request.Tags);
@@ -160,23 +166,22 @@ public sealed class ContactService : IContactService
         }
     }
 
-    private static IEnumerable<Contact> ApplySorting(IEnumerable<Contact> contacts, string? sortBy, string? sortOrder)
+    private static IEnumerable<Contact> ApplySorting(
+        IEnumerable<Contact> contacts,
+        ContactSortField sortBy,
+        SortDirection sortOrder)
     {
-        var field = string.IsNullOrWhiteSpace(sortBy) ? "lastName" : sortBy.Trim();
-        if (!AllowedSortFields.Contains(field))
-        {
-            field = "lastName";
-        }
+        var descending = sortOrder == SortDirection.Desc;
 
-        var descending = string.Equals(sortOrder, "desc", StringComparison.OrdinalIgnoreCase);
-
-        return field.ToLowerInvariant() switch
+        return sortBy switch
         {
-            "firstname" => descending ? contacts.OrderByDescending(c => c.FirstName) : contacts.OrderBy(c => c.FirstName),
-            "email" => descending ? contacts.OrderByDescending(c => c.Email) : contacts.OrderBy(c => c.Email),
-            "company" => descending ? contacts.OrderByDescending(c => c.Company) : contacts.OrderBy(c => c.Company),
-            "createdat" => descending ? contacts.OrderByDescending(c => c.CreatedAt) : contacts.OrderBy(c => c.CreatedAt),
-            "updatedat" => descending ? contacts.OrderByDescending(c => c.UpdatedAt) : contacts.OrderBy(c => c.UpdatedAt),
+            ContactSortField.FirstName => descending ? contacts.OrderByDescending(c => c.FirstName) : contacts.OrderBy(c => c.FirstName),
+            ContactSortField.Email => descending ? contacts.OrderByDescending(c => c.Email) : contacts.OrderBy(c => c.Email),
+            ContactSortField.Company => descending ? contacts.OrderByDescending(c => c.Company) : contacts.OrderBy(c => c.Company),
+            ContactSortField.City => descending ? contacts.OrderByDescending(c => c.City) : contacts.OrderBy(c => c.City),
+            ContactSortField.Country => descending ? contacts.OrderByDescending(c => c.Country) : contacts.OrderBy(c => c.Country),
+            ContactSortField.CreatedAt => descending ? contacts.OrderByDescending(c => c.CreatedAt) : contacts.OrderBy(c => c.CreatedAt),
+            ContactSortField.UpdatedAt => descending ? contacts.OrderByDescending(c => c.UpdatedAt) : contacts.OrderBy(c => c.UpdatedAt),
             _ => descending ? contacts.OrderByDescending(c => c.LastName) : contacts.OrderBy(c => c.LastName)
         };
     }
@@ -190,6 +195,11 @@ public sealed class ContactService : IContactService
             contact.Email,
             contact.PhoneNumber,
             contact.Company,
+            contact.AddressLine,
+            contact.District,
+            contact.City,
+            contact.PostalCode,
+            contact.Country,
             contact.Notes,
             contact.IsFavorite,
             contact.Tags.OrderBy(tag => tag).ToList(),

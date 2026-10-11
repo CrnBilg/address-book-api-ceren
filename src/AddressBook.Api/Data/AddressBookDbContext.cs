@@ -22,6 +22,11 @@ public sealed class AddressBookDbContext : DbContext
             entity.Property(contact => contact.Email).HasMaxLength(254);
             entity.Property(contact => contact.PhoneNumber).HasMaxLength(40);
             entity.Property(contact => contact.Company).HasMaxLength(120);
+            entity.Property(contact => contact.AddressLine).HasMaxLength(200);
+            entity.Property(contact => contact.District).HasMaxLength(80);
+            entity.Property(contact => contact.City).HasMaxLength(80);
+            entity.Property(contact => contact.PostalCode).HasMaxLength(20);
+            entity.Property(contact => contact.Country).HasMaxLength(80);
             entity.Property(contact => contact.Notes).HasMaxLength(1000);
         });
     }
