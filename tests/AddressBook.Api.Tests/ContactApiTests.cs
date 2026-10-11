@@ -41,6 +41,36 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
     }
 
     [Fact]
+    public async Task CreateAndRetrieveContact_PersistsOptionalPostalAddress()
+    {
+        var response = await _client.PostAsJsonAsync("/api/v1/contacts", new CreateContactDto
+        {
+            FirstName = "Address",
+            LastName = "Owner",
+            Email = "address.owner@example.com",
+            AddressLine = "Example Street 42",
+            District = "Kadikoy",
+            City = "Istanbul",
+            PostalCode = "34710",
+            Country = "Turkiye",
+            Tags = ["home"]
+        });
+
+        var created = await response.Content.ReadFromJsonAsync<ContactDto>();
+        var getResponse = await _client.GetAsync($"/api/v1/contacts/{created!.Id}");
+        var retrieved = await getResponse.Content.ReadFromJsonAsync<ContactDto>();
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        Assert.NotNull(retrieved);
+        Assert.Equal("Example Street 42", retrieved.AddressLine);
+        Assert.Equal("Kadikoy", retrieved.District);
+        Assert.Equal("Istanbul", retrieved.City);
+        Assert.Equal("34710", retrieved.PostalCode);
+        Assert.Equal("Turkiye", retrieved.Country);
+    }
+
+    [Fact]
     public async Task GetContactById_ReturnsExistingContact()
     {
         var created = await CreateAndReadContactAsync("Ada", "Lovelace", "ada@example.com");
@@ -83,6 +113,11 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
             Email = "new@example.com",
             PhoneNumber = "+905551112233",
             Company = "SE4458",
+            AddressLine = "Updated Street 10",
+            District = "Besiktas",
+            City = "Istanbul",
+            PostalCode = "34353",
+            Country = "Turkiye",
             Notes = "Updated",
             IsFavorite = true,
             Tags = ["updated"]
@@ -93,6 +128,8 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
         Assert.NotNull(updated);
         Assert.Equal("New", updated.FirstName);
         Assert.Equal("new@example.com", updated.Email);
+        Assert.Equal("Istanbul", updated.City);
+        Assert.Equal("Turkiye", updated.Country);
         Assert.True(updated.IsFavorite);
         Assert.Contains("updated", updated.Tags);
     }
@@ -125,6 +162,26 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
     }
 
     [Fact]
+    public async Task SearchContacts_MatchesPostalAddressFields()
+    {
+        await CreateAndReadContactAsync(
+            "City",
+            "Search",
+            "city.search@example.com",
+            city: "Ankara",
+            country: "Turkiye",
+            addressLine: "Ataturk Boulevard");
+
+        var cityResult = await _client.GetFromJsonAsync<PagedResult<ContactDto>>("/api/v1/contacts?search=ankara");
+        var addressResult = await _client.GetFromJsonAsync<PagedResult<ContactDto>>("/api/v1/contacts?search=ataturk");
+
+        Assert.NotNull(cityResult);
+        Assert.NotNull(addressResult);
+        Assert.Equal("City", cityResult.Items.Single().FirstName);
+        Assert.Equal("City", addressResult.Items.Single().FirstName);
+    }
+
+    [Fact]
     public async Task SortContacts_SupportsAscendingAndDescending()
     {
         await CreateAndReadContactAsync("Charlie", "Zed", "charlie@example.com");
@@ -140,6 +197,19 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
         Assert.NotNull(descending);
         Assert.Equal(new[] { "Alice", "Bob", "Charlie" }, ascending.Items.Select(contact => contact.FirstName).ToArray());
         Assert.Equal(new[] { "Charlie", "Bob", "Alice" }, descending.Items.Select(contact => contact.FirstName).ToArray());
+    }
+
+    [Fact]
+    public async Task SortContacts_SupportsCityAndCountry()
+    {
+        await CreateAndReadContactAsync("One", "Person", "one@example.com", city: "Izmir", country: "Turkiye");
+        await CreateAndReadContactAsync("Two", "Person", "two@example.com", city: "Ankara", country: "Turkiye");
+
+        var byCity = await _client.GetFromJsonAsync<PagedResult<ContactDto>>(
+            "/api/v1/contacts?sortBy=city&sortOrder=asc&pageSize=10");
+
+        Assert.NotNull(byCity);
+        Assert.Equal(new[] { "Two", "One" }, byCity.Items.Select(contact => contact.FirstName).ToArray());
     }
 
     [Fact]
@@ -247,14 +317,85 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
     }
 
     [Fact]
+    public async Task ExtremePageNumber_ReturnsBadRequestInsteadOfOverflowing()
+    {
+        await CreateAndReadContactAsync("Overflow", "Check", "overflow@example.com");
+
+        var response = await _client.GetAsync("/api/v1/contacts?pageNumber=2147483647&pageSize=100");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HighValidPageNumber_ReturnsEmptyPage()
+    {
+        await CreateAndReadContactAsync("Empty", "Page", "empty.page@example.com");
+
+        var result = await _client.GetFromJsonAsync<PagedResult<ContactDto>>(
+            "/api/v1/contacts?pageNumber=100000&pageSize=100");
+
+        Assert.NotNull(result);
+        Assert.Empty(result.Items);
+        Assert.Equal(100000, result.PageNumber);
+        Assert.Equal(1, result.TotalCount);
+    }
+
+    [Fact]
+    public async Task InvalidSortParameters_ReturnBadRequest()
+    {
+        var sortByResponse = await _client.GetAsync("/api/v1/contacts?sortBy=hacker");
+        var sortOrderResponse = await _client.GetAsync("/api/v1/contacts?sortOrder=sideways");
+
+        Assert.Equal(HttpStatusCode.BadRequest, sortByResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, sortOrderResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task WeakEmailAndPhoneValues_ReturnBadRequest()
+    {
+        var emailResponse = await CreateContactAsync("Weak", "Email", "a@b");
+        var phoneResponse = await CreateContactAsync("Weak", "Phone", phoneNumber: "1");
+
+        Assert.Equal(HttpStatusCode.BadRequest, emailResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, phoneResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProblemDetailsResponses_UseProblemJsonContentType()
+    {
+        var response = await _client.GetAsync($"/api/v1/contacts/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
+    public async Task RootRedirectsToSwagger()
+    {
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/swagger", response.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
     public async Task Swagger_IsAccessibleAndDocumentsContactEndpoints()
     {
         var response = await _client.GetAsync("/swagger/v1/swagger.json");
         var swagger = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(swagger);
         var paths = document.RootElement.GetProperty("paths");
+        var info = document.RootElement.GetProperty("info");
+        var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Address Book REST API", info.GetProperty("title").GetString());
+        Assert.Equal("v1", info.GetProperty("version").GetString());
         Assert.True(paths.TryGetProperty("/api/v1/contacts", out var contactsPath));
         Assert.True(paths.TryGetProperty("/api/v1/contacts/{id}", out var contactByIdPath));
         Assert.True(paths.TryGetProperty("/api/v1/contacts/{id}/favorite", out var favoritePath));
@@ -270,6 +411,59 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
         Assert.True(contactByIdPath.GetProperty("delete").GetProperty("responses").TryGetProperty("204", out _));
         Assert.True(favoritePath.GetProperty("patch").GetProperty("responses").TryGetProperty("200", out _));
         Assert.True(unfavoritePath.GetProperty("patch").GetProperty("responses").TryGetProperty("200", out _));
+
+        var createProperties = schemas.GetProperty("CreateContactDto").GetProperty("properties");
+        Assert.True(createProperties.TryGetProperty("addressLine", out _));
+        Assert.True(createProperties.TryGetProperty("city", out _));
+        Assert.True(createProperties.TryGetProperty("country", out _));
+
+        Assert.Equal("Ceren", createProperties.GetProperty("firstName").GetProperty("example").GetString());
+
+        var parameters = contactsPath.GetProperty("get").GetProperty("parameters").EnumerateArray().ToList();
+        Assert.Equal(
+            new[] { "search", "tag", "isFavorite", "sortBy", "sortOrder", "pageNumber", "pageSize" },
+            parameters.Select(parameter => parameter.GetProperty("name").GetString()).ToArray());
+
+        var sortBySchemaRef = parameters
+            .Single(parameter => parameter.GetProperty("name").GetString() == "sortBy")
+            .GetProperty("schema")
+            .GetProperty("$ref")
+            .GetString();
+        var sortBySchemaName = sortBySchemaRef!.Split('/').Last();
+        Assert.True(schemas.GetProperty(sortBySchemaName).TryGetProperty("enum", out _));
+
+        var badRequestSchemaRef = contactsPath
+            .GetProperty("post")
+            .GetProperty("responses")
+            .GetProperty("400")
+            .GetProperty("content")
+            .GetProperty("application/json")
+            .GetProperty("schema")
+            .GetProperty("$ref")
+            .GetString();
+        Assert.EndsWith("/ValidationProblemDetails", badRequestSchemaRef);
+    }
+
+    [Fact]
+    public async Task QueryParameters_RemainCaseInsensitive()
+    {
+        await CreateAndReadContactAsync("Bob", "Second", "bob.case@example.com");
+        await CreateAndReadContactAsync("Alice", "First", "alice.case@example.com");
+
+        var result = await _client.GetFromJsonAsync<PagedResult<ContactDto>>(
+            "/api/v1/contacts?SortBy=FirstName&SortOrder=Desc&PageSize=10");
+
+        Assert.NotNull(result);
+        Assert.Equal(new[] { "Bob", "Alice" }, result.Items.Select(contact => contact.FirstName).ToArray());
+    }
+
+    [Fact]
+    public async Task InvalidContactId_ReturnsProblemDetailsNotFound()
+    {
+        var response = await _client.GetAsync("/api/v1/contacts/not-a-guid");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 
     [Fact]
@@ -288,7 +482,10 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
         string? email = null,
         bool isFavorite = false,
         List<string>? tags = null,
-        string? phoneNumber = null)
+        string? phoneNumber = null,
+        string? addressLine = null,
+        string? city = null,
+        string? country = null)
     {
         return await _client.PostAsJsonAsync("/api/v1/contacts", new CreateContactDto
         {
@@ -296,6 +493,9 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
             LastName = lastName,
             Email = email,
             PhoneNumber = phoneNumber,
+            AddressLine = addressLine,
+            City = city,
+            Country = country,
             IsFavorite = isFavorite,
             Tags = tags ?? []
         });
@@ -307,9 +507,21 @@ public sealed class ContactApiTests : IClassFixture<ContactApiFactory>
         string? email = null,
         bool isFavorite = false,
         List<string>? tags = null,
-        string? phoneNumber = null)
+        string? phoneNumber = null,
+        string? addressLine = null,
+        string? city = null,
+        string? country = null)
     {
-        var response = await CreateContactAsync(firstName, lastName, email, isFavorite, tags, phoneNumber);
+        var response = await CreateContactAsync(
+            firstName,
+            lastName,
+            email,
+            isFavorite,
+            tags,
+            phoneNumber,
+            addressLine,
+            city,
+            country);
         response.EnsureSuccessStatusCode();
         var contact = await response.Content.ReadFromJsonAsync<ContactDto>();
         return contact!;

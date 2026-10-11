@@ -1,5 +1,6 @@
 using AddressBook.Api.Exceptions;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace AddressBook.Api.Middleware;
 
@@ -52,6 +53,6 @@ public sealed class ExceptionHandlingMiddleware
             Instance = context.Request.Path
         };
 
-        await context.Response.WriteAsJsonAsync(problem);
+        await context.Response.WriteAsJsonAsync(problem, (JsonSerializerOptions?)null, "application/problem+json");
     }
 }
