@@ -152,9 +152,9 @@ Data is stored only in process memory and is reset when the application restarts
 
 After deployment, add these links before final submission:
 
-- GitHub repository URL: `TODO`
-- Render deployment URL: `TODO`
-- Public Swagger URL: `TODO/swagger`
+- GitHub repository URL: `https://github.com/CrnBilg/address-book-api-ceren`
+- Render deployment URL: `https://address-book-api-ceren.onrender.com`
+- Public Swagger URL: `https://address-book-api-ceren.onrender.com/swagger`
 
 ## Encountered Issues During Development
 
